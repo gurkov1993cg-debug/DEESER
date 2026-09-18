@@ -122,6 +122,14 @@ jobs:
           for token in ["beginEdit", "performEdit", "endEdit", "NSTextField", "clickCount >= 2", "defaultNormalized"]:
               assert token in gui, f"GUI contract missing {token}"
 
+          # Objective-C @interface/@implementation declarations are illegal inside a C++ namespace.
+          objc_interface = gui.index("@interface SilvetonDeEsserNSView")
+          ns_open = gui.rfind("namespace Steinberg::Vst {", 0, objc_interface)
+          ns_close = gui.rfind("} // namespace Steinberg::Vst", 0, objc_interface)
+          assert ns_close > ns_open, "Objective-C GUI declaration must be at global scope"
+          objc_end = gui.index("@end", objc_interface)
+          assert gui.find("namespace Steinberg::Vst {", objc_end) > objc_end, "NativeEditor C++ methods must reopen Steinberg::Vst namespace"
+
           dsp = (root / "core/src/DeEsserDSP.cpp").read_text()
           for token in ["linkedTarget", "detectedFrequencyHz", "lookaheadSamples_", "tonalProtect", "airProtect", "musicality"]:
               assert token in dsp, token
