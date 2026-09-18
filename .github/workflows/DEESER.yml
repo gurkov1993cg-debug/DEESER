@@ -79,6 +79,7 @@ jobs:
           assert "enable_language(OBJCXX)" in cm
           assert "Cocoa" in cm
           assert "-O3" in cm
+          assert "project(SilvetonDeEsser VERSION 1.1.0" in cm
 
           factory = (root / "plugin/PluginFactory.cpp").read_text()
           assert "public.sdk/source/main/pluginfactory_constexpr.h" in factory
@@ -89,7 +90,7 @@ jobs:
           assert "0x9840BC5A" in ids and "0xA4B9C752" in ids
 
           version = (root / "plugin/Version.h").read_text()
-          assert 'DEESER_VERSION_STR "1.0.0"' in version
+          assert 'DEESER_VERSION_STR "1.1.0"' in version
           assert 'DEESER_NAME "Silveton De-Esser"' in version
           assert 'DEESER_VENDOR "Silveton"' in version
 
@@ -108,8 +109,11 @@ jobs:
           user_params = ["Sensitivity", "Amount", "FocusHz", "MaxReductionDb", "Musicality", "AirProtect",
                          "AutoMode", "Listen", "StereoLink", "Bypass"]
           meters = ["MeterInputDb", "MeterOutputDb", "MeterGainReductionDb", "MeterDetector", "MeterDetectedFrequencyHz"]
-          for token in user_params + meters:
+          analyzer_meters = ["MeterAnalyzer3600Db", "MeterAnalyzer4400Db", "MeterAnalyzer5400Db", "MeterAnalyzer6600Db",
+                             "MeterAnalyzer8000Db", "MeterAnalyzer9800Db", "MeterAnalyzer11800Db"]
+          for token in user_params + meters + analyzer_meters:
               assert token in params, token
+          assert "analyzerCenterHz" in params and "analyzerMeterIds" in params
 
           gui = (root / "gui/NativeEditor.mm").read_text()
           controller_h = (root / "plugin/DeEsserController.h").read_text()
@@ -121,6 +125,11 @@ jobs:
               assert f"ID::{token}" in gui, f"GUI missing {token}"
           for token in ["beginEdit", "performEdit", "endEdit", "NSTextField", "clickCount >= 2", "defaultNormalized"]:
               assert token in gui, f"GUI contract missing {token}"
+          for token in ["SIBILANCE ANALYZER", "analyzerMeterIds", "analyzerCenterHz", "PEAK", "MANUAL: click the analyzer",
+                        "1  DETECT", "2  REDUCE", "3  PROTECT", "AUTO FOCUS", "DE-ESS AMOUNT", "MAX REDUCTION"]:
+              assert token in gui, f"logical GUI/analyzer contract missing {token}"
+          for token in analyzer_meters:
+              assert token in controller, f"controller missing analyzer parameter {token}"
 
           # Objective-C @interface/@implementation declarations are illegal inside a C++ namespace.
           objc_interface = gui.index("@interface SilvetonDeEsserNSView")
@@ -131,8 +140,10 @@ jobs:
           assert gui.find("namespace Steinberg::Vst {", objc_end) > objc_end, "NativeEditor C++ methods must reopen Steinberg::Vst namespace"
 
           dsp = (root / "core/src/DeEsserDSP.cpp").read_text()
-          for token in ["linkedTarget", "detectedFrequencyHz", "lookaheadSamples_", "tonalProtect", "airProtect", "musicality"]:
+          for token in ["linkedTarget", "detectedFrequencyHz", "lookaheadSamples_", "tonalProtect", "airProtect", "musicality",
+                        "meterBandPeak_", "analyzerBandDb", "blockBandPeak"]:
               assert token in dsp, token
+          assert "analyzerMeterIds" in proc_cpp and "analyzerBandDb" in proc_cpp, "real analyzer meters are not pushed to host"
           assert "new " not in dsp and "malloc(" not in dsp, "allocation found in DSP implementation"
 
           print("Silveton De-Esser complete source contract OK")
