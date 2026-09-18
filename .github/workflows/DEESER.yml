@@ -112,8 +112,11 @@ jobs:
               assert token in params, token
 
           gui = (root / "gui/NativeEditor.mm").read_text()
+          controller_h = (root / "plugin/DeEsserController.h").read_text()
           controller = (root / "plugin/DeEsserController.cpp").read_text()
-          assert "createView" in controller and "NativeEditor" in controller
+          assert "IPlugView* PLUGIN_API createView(FIDString name)" in controller_h, "controller createView declaration must return IPlugView*"
+          assert "IPlugView* PLUGIN_API DeEsserController::createView(FIDString name)" in controller, "controller createView definition must return IPlugView*"
+          assert "NativeEditor" in controller
           for token in user_params + meters:
               assert f"ID::{token}" in gui, f"GUI missing {token}"
           for token in ["beginEdit", "performEdit", "endEdit", "NSTextField", "clickCount >= 2", "defaultNormalized"]:
