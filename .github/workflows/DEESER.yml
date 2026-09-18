@@ -95,6 +95,8 @@ jobs:
 
           proc_h = (root / "plugin/DeEsserProcessor.h").read_text()
           proc_cpp = (root / "plugin/DeEsserProcessor.cpp").read_text()
+          assert 'pluginterfaces/vst/ivstspeaker.h' not in proc_cpp, "obsolete/nonexistent Steinberg speaker header"
+          assert 'pluginterfaces/vst/vstspeaker.h' in proc_cpp, "correct Steinberg speaker header missing"
           for token in ["initialize", "terminate", "setupProcessing", "setActive", "setBusArrangements",
                         "canProcessSampleSize", "process", "setState", "getState", "getLatencySamples", "getTailSamples"]:
               assert token in proc_h or token in proc_cpp, token
