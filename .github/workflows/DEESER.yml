@@ -1,1 +1,235 @@
+name: SILVETON DE-ESSER
 
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'DEESER.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: silveton-deesser-macos
+  cancel-in-progress: true
+
+jobs:
+  macos-intel-vst3:
+    runs-on: macos-15-intel
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract DEESER source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf source
+          mkdir source
+          ditto -x -k DEESER.zip source
+          test -f source/DEESER/CMakeLists.txt
+          echo "DEESER_SOURCE=$GITHUB_WORKSPACE/source/DEESER" >> "$GITHUB_ENV"
+
+      - name: Verify complete source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("source/DEESER")
+          required = [
+              root / "CMakeLists.txt",
+              root / "README.md",
+              root / "core/include/deeser/DeEsserDSP.h",
+              root / "core/src/DeEsserDSP.cpp",
+              root / "plugin/DeEsserProcessor.cpp",
+              root / "plugin/DeEsserProcessor.h",
+              root / "plugin/DeEsserController.cpp",
+              root / "plugin/DeEsserController.h",
+              root / "plugin/DeEsserIDs.h",
+              root / "plugin/ParameterContract.h",
+              root / "plugin/StateContract.h",
+              root / "plugin/PluginFactory.cpp",
+              root / "plugin/Version.h",
+              root / "gui/NativeEditor.h",
+              root / "gui/NativeEditor.mm",
+              root / "tests/DeEsserTests.cpp",
+          ]
+          for p in required:
+              assert p.is_file(), f"missing {p}"
+
+          forbidden_tokens = ["juce::", "JuceHeader", "juce_audio", "juce_gui", "JUCE_CALLTYPE"]
+          for base in (root / "core", root / "plugin", root / "gui"):
+              for path in base.rglob("*"):
+                  if path.is_file() and path.suffix.lower() in {".h", ".hpp", ".c", ".cc", ".cpp", ".mm", ".m"}:
+                      text = path.read_text(errors="ignore")
+                      for token in forbidden_tokens:
+                          assert token not in text, f"{token} found in {path}"
+
+          cm = (root / "CMakeLists.txt").read_text()
+          assert 'add_subdirectory("${VST3_SDK_DIR}"' in cm
+          assert "smtg_enable_vst3_sdk()" in cm
+          assert "smtg_add_vst3plugin(SilvetonDeEsser" in cm
+          assert "SMTG_BUILD_UNIVERSAL_BINARY OFF" in cm
+          assert "SMTG_CREATE_PLUGIN_LINK OFF" in cm
+          assert "NativeEditor.mm" in cm
+          assert "enable_language(OBJCXX)" in cm
+          assert "Cocoa" in cm
+          assert "-O3" in cm
+
+          factory = (root / "plugin/PluginFactory.cpp").read_text()
+          assert "public.sdk/source/main/pluginfactory_constexpr.h" in factory
+          assert "BEGIN_FACTORY_DEF" in factory and "2)" in factory
+          assert "Steinberg::Vst::kDistributable" in factory
+
+          ids = (root / "plugin/DeEsserIDs.h").read_text()
+          assert "0x9840BC5A" in ids and "0xA4B9C752" in ids
+
+          version = (root / "plugin/Version.h").read_text()
+          assert 'DEESER_VERSION_STR "1.0.0"' in version
+          assert 'DEESER_NAME "Silveton De-Esser"' in version
+          assert 'DEESER_VENDOR "Silveton"' in version
+
+          proc_h = (root / "plugin/DeEsserProcessor.h").read_text()
+          proc_cpp = (root / "plugin/DeEsserProcessor.cpp").read_text()
+          for token in ["initialize", "terminate", "setupProcessing", "setActive", "setBusArrangements",
+                        "canProcessSampleSize", "process", "setState", "getState", "getLatencySamples", "getTailSamples"]:
+              assert token in proc_h or token in proc_cpp, token
+          assert "kSample32" in proc_cpp and "kSample64" in proc_cpp
+          assert "QueueCursor" in proc_cpp, "sample-accurate automation path missing"
+          assert "std::array<QueueCursor" in proc_cpp, "audio-thread automation must be fixed-storage"
+
+          params = (root / "plugin/ParameterContract.h").read_text()
+          user_params = ["Sensitivity", "Amount", "FocusHz", "MaxReductionDb", "Musicality", "AirProtect",
+                         "AutoMode", "Listen", "StereoLink", "Bypass"]
+          meters = ["MeterInputDb", "MeterOutputDb", "MeterGainReductionDb", "MeterDetector", "MeterDetectedFrequencyHz"]
+          for token in user_params + meters:
+              assert token in params, token
+
+          gui = (root / "gui/NativeEditor.mm").read_text()
+          controller = (root / "plugin/DeEsserController.cpp").read_text()
+          assert "createView" in controller and "NativeEditor" in controller
+          for token in user_params + meters:
+              assert f"ID::{token}" in gui, f"GUI missing {token}"
+          for token in ["beginEdit", "performEdit", "endEdit", "NSTextField", "clickCount >= 2", "defaultNormalized"]:
+              assert token in gui, f"GUI contract missing {token}"
+
+          dsp = (root / "core/src/DeEsserDSP.cpp").read_text()
+          for token in ["linkedTarget", "detectedFrequencyHz", "lookaheadSamples_", "tonalProtect", "airProtect", "musicality"]:
+              assert token in dsp, token
+          assert "new " not in dsp and "malloc(" not in dsp, "allocation found in DSP implementation"
+
+          print("Silveton De-Esser complete source contract OK")
+          PY
+
+      - name: Configure DSP core
+        run: cmake -S "$DEESER_SOURCE" -B build-core -DBUILD_VST3_ADAPTER=OFF -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build DSP core tests
+        run: cmake --build build-core --parallel 4
+
+      - name: Run DSP parameter and state tests
+        run: ctest --test-dir build-core --output-on-failure
+
+      - name: Checkout proven Steinberg VST3 SDK
+        uses: actions/checkout@v4
+        with:
+          repository: steinbergmedia/vst3sdk
+          ref: 3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96
+          path: vst3sdk
+          submodules: recursive
+
+      - name: Verify exact SDK revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C vst3sdk rev-parse HEAD)" = "3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96"
+          test "$(git -C vst3sdk/public.sdk rev-parse HEAD)" = "586dc5e6c8012c3e4b01c79389375cbe96bdb1da"
+          test "$(git -C vst3sdk/pluginterfaces rev-parse HEAD)" = "4f547e8e102b47de4a8b8aaf343c73b700786372"
+          test "$(git -C vst3sdk/cmake rev-parse HEAD)" = "054c9143cbb8d47fc4694e473f2ee3b4d951a8f5"
+
+      - name: Configure Intel VST3
+        run: >-
+          cmake -S "$DEESER_SOURCE" -B build-vst3 -G Xcode
+          -DBUILD_VST3_ADAPTER=ON
+          -DVST3_SDK_DIR="$GITHUB_WORKSPACE/vst3sdk"
+          -DCMAKE_OSX_ARCHITECTURES=x86_64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          -DSMTG_BUILD_UNIVERSAL_BINARY=OFF
+          -DSMTG_CREATE_PLUGIN_LINK=OFF
+          -DSMTG_ENABLE_VST3_PLUGIN_EXAMPLES=OFF
+          -DSMTG_ENABLE_VST3_HOSTING_EXAMPLES=ON
+          -DSMTG_ENABLE_VSTGUI_SUPPORT=OFF
+
+      - name: Verify Steinberg macmain integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -R "public.sdk/source/main/macmain.cpp\|macmain.cpp" build-vst3/SilvetonDeEsser.xcodeproj/project.pbxproj
+
+      - name: Build Intel VST3
+        run: cmake --build build-vst3 --config Release --target SilvetonDeEsser --parallel 4
+
+      - name: Verify Intel VST3 binary and signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          VST=$(find build-vst3 -type d -name 'SilvetonDeEsser.vst3' -print -quit)
+          test -n "$VST"
+          BIN="$VST/Contents/MacOS/SilvetonDeEsser"
+          test -f "$BIN"
+
+          file "$BIN" | tee binary-info.txt
+          ARCHS=$(lipo -archs "$BIN")
+          test "$ARCHS" = "x86_64" || { echo "ERROR: expected x86_64 only, got: $ARCHS"; exit 1; }
+
+          xcrun vtool -show-build "$BIN" | tee deployment-info.txt
+          grep -Eq 'minos[[:space:]]+10\.13|version[[:space:]]+10\.13' deployment-info.txt || {
+            echo "ERROR: macOS 10.13 deployment target not present"; exit 1;
+          }
+
+          nm -gU "$BIN" | tee exported-symbols.txt
+          grep -q '_bundleEntry' exported-symbols.txt
+          grep -q '_bundleExit' exported-symbols.txt
+          grep -q '_GetPluginFactory' exported-symbols.txt
+
+          codesign --force --deep --sign - "$VST"
+          codesign --verify --deep --strict "$VST"
+          codesign --display --verbose=4 "$VST" 2>&1 | tee codesign-info.txt
+
+      - name: Build Steinberg validator
+        run: cmake --build build-vst3 --config Release --target validator --parallel 4
+
+      - name: Run Steinberg validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          VST=$(find build-vst3 -type d -name 'SilvetonDeEsser.vst3' -print -quit)
+          VALIDATOR=$(find build-vst3 -type f \( -name validator -o -name Validator \) -perm -111 -print -quit)
+          test -n "$VST"
+          test -n "$VALIDATOR"
+          "$VALIDATOR" "$VST" | tee validator.txt
+
+      - name: Collect VST3
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf artifact
+          mkdir -p artifact
+          VST=$(find build-vst3 -type d -name 'SilvetonDeEsser.vst3' -print -quit)
+          test -n "$VST"
+          test -f "$VST/Contents/MacOS/SilvetonDeEsser"
+          cp -R "$VST" artifact/
+          cp binary-info.txt deployment-info.txt exported-symbols.txt codesign-info.txt validator.txt artifact/
+          ditto -c -k --sequesterRsrc --keepParent "$VST" artifact/Silveton-DEESER-macOS-Intel.zip
+
+      - name: Upload macOS Intel VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: Silveton-DEESER-macOS-Intel
+          path: artifact
+          if-no-files-found: error
+          retention-days: 30
