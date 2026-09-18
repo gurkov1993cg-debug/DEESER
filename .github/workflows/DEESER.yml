@@ -79,7 +79,10 @@ jobs:
           assert "enable_language(OBJCXX)" in cm
           assert "Cocoa" in cm
           assert "-O3" in cm
-          assert "project(SilvetonDeEsser VERSION 1.1.0" in cm
+          import re
+          cm_version_match = re.search(r'project\(SilvetonDeEsser VERSION ([0-9]+\.[0-9]+\.[0-9]+)', cm)
+          assert cm_version_match, "CMake project version missing"
+          cm_version = cm_version_match.group(1)
 
           factory = (root / "plugin/PluginFactory.cpp").read_text()
           assert "public.sdk/source/main/pluginfactory_constexpr.h" in factory
@@ -90,7 +93,9 @@ jobs:
           assert "0x9840BC5A" in ids and "0xA4B9C752" in ids
 
           version = (root / "plugin/Version.h").read_text()
-          assert 'DEESER_VERSION_STR "1.2.0"' in version
+          version_match = re.search(r'DEESER_VERSION_STR "([^"]+)"', version)
+          assert version_match, "Version.h version missing"
+          assert version_match.group(1) == cm_version, f"version mismatch: CMake={cm_version} Version.h={version_match.group(1)}"
           assert 'DEESER_NAME "Silveton De-Esser"' in version
           assert 'DEESER_VENDOR "Silveton"' in version
 
