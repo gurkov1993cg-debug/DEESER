@@ -90,7 +90,7 @@ jobs:
           assert "0x9840BC5A" in ids and "0xA4B9C752" in ids
 
           version = (root / "plugin/Version.h").read_text()
-          assert 'DEESER_VERSION_STR "1.1.0"' in version
+          assert 'DEESER_VERSION_STR "1.2.0"' in version
           assert 'DEESER_NAME "Silveton De-Esser"' in version
           assert 'DEESER_VENDOR "Silveton"' in version
 
@@ -114,6 +114,8 @@ jobs:
           for token in user_params + meters + analyzer_meters:
               assert token in params, token
           assert "analyzerCenterHz" in params and "analyzerMeterIds" in params
+          for token in ["spectrumMeterCount", "SpectrumMeterBase", "SpectrumMeterLast", "spectrumCenterHz", "isSpectrumMeter"]:
+              assert token in params, f"spectrum parameter contract missing {token}"
 
           gui = (root / "gui/NativeEditor.mm").read_text()
           controller_h = (root / "plugin/DeEsserController.h").read_text()
@@ -125,9 +127,12 @@ jobs:
               assert f"ID::{token}" in gui, f"GUI missing {token}"
           for token in ["beginEdit", "performEdit", "endEdit", "NSTextField", "clickCount >= 2", "defaultNormalized"]:
               assert token in gui, f"GUI contract missing {token}"
-          for token in ["SIBILANCE ANALYZER", "analyzerMeterIds", "analyzerCenterHz", "PEAK", "MANUAL: click the analyzer",
-                        "1  DETECT", "2  REDUCE", "3  PROTECT", "AUTO FOCUS", "DE-ESS AMOUNT", "MAX REDUCTION"]:
+          for token in ["PEAK", "DETECT", "REDUCE", "PROTECT", "SENSITIVITY", "FOCUS", "AMOUNT", "MAX GR",
+                        "MUSICALITY", "AIR PROTECT", "knobPoint", "drag UP = increase", "spectrumMeterCount", "spectrumCenterHz"]:
               assert token in gui, f"logical GUI/analyzer contract missing {token}"
+          for removed_clutter in ["Find the S region", "Set how much de-essing is allowed", "Keep the vocal natural",
+                                  "Value box = numeric entry", "MANUAL: click the analyzer"]:
+              assert removed_clutter not in gui, f"redundant GUI text returned: {removed_clutter}"
           for token in analyzer_meters:
               assert token in controller, f"controller missing analyzer parameter {token}"
 
@@ -141,9 +146,11 @@ jobs:
 
           dsp = (root / "core/src/DeEsserDSP.cpp").read_text()
           for token in ["linkedTarget", "detectedFrequencyHz", "lookaheadSamples_", "tonalProtect", "airProtect", "musicality",
-                        "meterBandPeak_", "analyzerBandDb", "blockBandPeak"]:
-              assert token in dsp, token
-          assert "analyzerMeterIds" in proc_cpp and "analyzerBandDb" in proc_cpp, "real analyzer meters are not pushed to host"
+                        "meterBandPeak_", "analyzerBandDb", "blockBandPeak", "fftInPlace", "analyzeSpectrum",
+                        "kSpectrumFFTSize", "spectrumSmoothedDb_", "spectrumWindow_"]:
+              assert token in dsp or token in (root / "core/include/deeser/DeEsserDSP.h").read_text(), token
+          assert "analyzerMeterIds" in proc_cpp and "analyzerBandDb" in proc_cpp, "real detector analyzer meters are not pushed to host"
+          assert "spectrumMeterId" in proc_cpp and "sendSpectrum" in proc_cpp and "/ 30.0" in proc_cpp, "FFT spectrum transport must be throttled"
           assert "new " not in dsp and "malloc(" not in dsp, "allocation found in DSP implementation"
 
           print("Silveton De-Esser complete source contract OK")
